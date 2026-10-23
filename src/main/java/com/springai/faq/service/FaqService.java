@@ -19,6 +19,6 @@ public class FaqService {
     public List<Faq> searchFaq(
             @ToolParam(description = "검색할 키워드 (예: 배송, 환불, 회원가입)") String keyword  // AI가 파라미터를 이해할 수 있도록 설명 제공
     ) {
-        return faqRepository.searchByKeyword(keyword);
+        return faqRepository.searchByKeyword(keyword).collectList().block();
     }
 }

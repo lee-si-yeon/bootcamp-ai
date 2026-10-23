@@ -3,11 +3,17 @@ package com.springai.global.initData;
 import com.springai.faq.entity.Faq;
 import com.springai.faq.repository.FaqRepository;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.core.io.Resource;
+import org.springframework.r2dbc.core.DatabaseClient;
+import org.springframework.util.StreamUtils;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 @Configuration
@@ -17,28 +23,43 @@ public class BaseInitData implements ApplicationRunner {
     private FaqRepository faqRepository;
 
     @Autowired
-    private JdbcTemplate jdbcTemplate;
+    private DatabaseClient databaseClient;  // R2DBC의 저수준 SQL 실행 클라이언트 (스키마 초기화와 데이터 삽입을 리액티브 체인으로 연결)
+
+    @Value("classpath:schema/faq-schema.sql")
+    private Resource schemaResource;
 
     @Override
     public void run(ApplicationArguments args){
-        initPgroonga();
-        initData();
+        initSchema()
+            .then(initData())
+            .block();
     }
 
-    private void initPgroonga(){
+    private Mono<Void> initSchema() {
         try{
-            jdbcTemplate.execute("CREATE EXTENSION IF NOT EXISTS pgroonga");
-            System.out.println("PGroonga 확장 설치 완료");
+            String schemaSql = StreamUtils.copyToString(schemaResource.getInputStream(), StandardCharsets.UTF_8);
+            String[] statements = schemaSql.split(";");
+
+            Mono<Void> chain = Mono.empty();
+            for (String statement : statements) {
+                String trimmed = statement.trim();
+                if (!trimmed.isEmpty()) {
+                    chain = chain.then(databaseClient.sql(trimmed).then());
+                }
+            }
+            return chain
+                    .doOnSuccess(v -> System.out.println("스키마 초기화 완료"))
+                    .onErrorResume(e -> {
+                        System.out.println("스키마 초기화 실패: " + e.getMessage());
+                        return Mono.empty();
+                    });
         } catch (Exception e){
-            System.out.println("PGroonga 확장 설치 실패" + e.getMessage());
+            System.out.println("스키마 파일 읽기 실패: " + e.getMessage());
+            return Mono.empty();
         }
 
     }
-    private void initData(){
-
-        if (faqRepository.count() > 0){
-            return;
-        }
+    private Mono<Void> initData(){
         List<Faq> faqs = List.of(
                 Faq.builder().question("회원가입은 어떻게 하나요?").answer("홈페이지 상단의 회원가입 버튼을 클릭하여 이메일, 비밀번호, 이름을 입력하시면 됩니다.").build(),
                 Faq.builder().question("비밀번호를 잊어버렸어요").answer("로그인 페이지에서 '비밀번호 찾기'를 클릭하시고 가입 시 사용한 이메일을 입력하시면 비밀번호 재설정 링크가 발송됩니다.").build(),
@@ -54,6 +75,16 @@ public class BaseInitData implements ApplicationRunner {
                 Faq.builder().question("쿠폰은 어디서 받나요?").answer("이벤트 페이지 또는 마이페이지 > 쿠폰함에서 발급받으실 수 있습니다.").build()
         );
 
-        faqRepository.saveAll(faqs);
+        return faqRepository.count()
+                .flatMap(count -> {
+                    if (count > 0) {
+                        System.out.println("FAQ 데이터가 이미 존재합니다: " + count + "개");
+                        return Mono.empty();
+                    }
+                    return Flux.fromIterable(faqs)
+                            .flatMap(faqRepository::save)
+                            .then()
+                            .doOnSuccess(v -> System.out.println("FAQ 초기 데이터 삽입 완료"));
+                });
     }
 }
