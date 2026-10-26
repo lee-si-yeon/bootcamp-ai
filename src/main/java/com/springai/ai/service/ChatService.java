@@ -6,6 +6,8 @@ import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 @Service
 public class ChatService {
@@ -22,8 +24,20 @@ public class ChatService {
             검색 결과가 없으면 "해당 내용에 대한 FAQ가 없습니다. 고객센터(1234-5678)로 문의해주세요."라고 안내하세요.
             """;
 
-    // AI가 사용자 질문을 분석하여 필요시 자동으로 searchFaq() 메서드를 호출
-    public Flux<String> streamChatResponse(String userMessage){
+    // call()은 답변이 끝날 때까지 기다리는 블로킹 호출이고, 도구도 호출한 스레드에서 실행됨
+    // 그래서 블로킹이 허용된 boundedElastic 스레드로 옮겨서 실행하고 결과를 Mono로 돌려줌
+    public Mono<String> chat(String userMessage) {
+        return Mono.fromCallable(() -> chatClient.prompt()
+                        .system(SYSTEM_PROMPT)
+                        .messages(UserMessage.builder().text(userMessage).build())
+                        .tools(faqService)
+                        .call()
+                        .content())
+                .subscribeOn(Schedulers.boundedElastic());
+    }
+
+    // stream()에서는 Spring AI가 도구를 boundedElastic 스레드에서 실행됨
+    public Flux<String> streamChatResponse(String userMessage) {
         return chatClient.prompt()
                 .system(SYSTEM_PROMPT)
                 .messages(UserMessage.builder().text(userMessage).build())

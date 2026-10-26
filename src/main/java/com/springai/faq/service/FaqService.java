@@ -7,6 +7,7 @@ import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
 import java.util.List;
 
 @Service
@@ -19,6 +20,6 @@ public class FaqService {
     public List<Faq> searchFaq(
             @ToolParam(description = "검색할 키워드 (예: 배송, 환불, 회원가입)") String keyword  // AI가 파라미터를 이해할 수 있도록 설명 제공
     ) {
-        return faqRepository.searchByKeyword(keyword).collectList().block();
+        return faqRepository.searchByKeyword(keyword).collectList().block(Duration.ofSeconds(10));  // DB가 응답하지 않을 때 무한정 기다리지 않게 함
     }
 }
